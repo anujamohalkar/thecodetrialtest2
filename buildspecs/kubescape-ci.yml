@@ -1,0 +1,59 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash -s -- -v v3.0.16
+      - kubescape version      
+  pre_build:
+    commands:
+      - echo "Preparing to invoke Lambda"
+      - echo "pipeline name $PIPELINE_NAME"
+      - echo $CODEPIPELINE_EXECUTION_ID
+      - |
+        PAYLOAD=$(echo -n "{\"executionId\": \"$CODEPIPELINE_EXECUTION_ID\"}" | base64)
+      - aws lambda invoke --function-name ${ProjectName}-GenerateScanNameCI --payload "$PAYLOAD" response.json  
+      - cat response.json
+      - SCAN_NAME=$(cat response.json | jq -r '.scan_name')
+      - echo "timestamp=$SCAN_NAME"
+      - |
+        if ! find . -type f -regex ".*\.\(yaml\|yml\)" -exec grep -l "kind:" {} \; | grep -q .; then
+          if ! find . -type f -name "Chart.yaml" | grep -q .; then
+            echo "No Kubernetes manifests or Helm charts found - skipping Kubescape scan"
+            echo "Creating empty results files"
+            echo "<scan><results></results></scan>" > kubescape-results.xml
+            exit 0
+          fi
+        fi
+      - echo "Kubernetes files found - proceeding with Kubescape scan"
+  build:
+    commands:
+      - echo "Running Kubescape scan..."
+      - |
+        # Scanning K8s YAML files without a cluster connection
+        K8S_FILES=$(find . -type f -regex ".*\.\(yaml\|yml\)" -exec grep -l "kind:" {} \;)
+        if [ ! -z "$K8S_FILES" ]; then
+          kubescape scan $K8S_FILES --format junit --output kubescape-results.xml || true
+        else
+          # Fallback to create empty results files
+          echo '{"frameworks": [{"controls": [], "name": "nsa", "version": "1.0"}], "results": []}' > kubescape-results.json
+          echo "<scan><results></results></scan>" > kubescape-results.xml
+        fi
+      - ls -la
+
+  post_build:
+    commands:
+      - |
+        TIMESTAMP=$(date +%Y-%m-%d-%H-%M)
+        if [ -f "kubescape-results.xml" ]; then
+          aws s3 cp kubescape-results.xml s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/StaticKubescapeResults/kubescape-results.xml
+        else
+          echo "XML results file not found, creating empty one"
+          echo "<scan><results></results></scan>" > kubescape-results.xml
+          aws s3 cp kubescape-results.xml s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/StaticKubescapeResults/kubescape-results.xml
+        fi
+
+artifacts:
+  files:
+    - kubescape-results.xml
+  base-directory: .

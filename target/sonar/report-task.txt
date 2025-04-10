@@ -1,0 +1,6 @@
+projectKey=com.mycompany.app:my-app
+serverUrl=https://sq.secureline.cloud
+serverVersion=10.6.0.92116
+dashboardUrl=https://sq.secureline.cloud/dashboard?id=com.mycompany.app%3Amy-app
+ceTaskId=3a37f138-ccd5-429d-8663-6cb862d44dae
+ceTaskUrl=https://sq.secureline.cloud/api/ce/task?id=3a37f138-ccd5-429d-8663-6cb862d44dae

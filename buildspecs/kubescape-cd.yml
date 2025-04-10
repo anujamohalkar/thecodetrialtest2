@@ -1,0 +1,37 @@
+version: 0.2
+run-as: root
+
+phases:
+  pre_build:
+    commands:
+      - echo "Setting up SSH for remote Kubescape scan..."
+      - mkdir -p /root/.ssh
+      - aws ssm get-parameter --name "/devsecops/SECURLINE_PRIVATE_KEY" --with-decryption --query "Parameter.Value" --output text > /root/.ssh/id_rsa
+      - chmod 600 /root/.ssh/id_rsa
+      - echo "StrictHostKeyChecking no" >> /root/.ssh/config
+      - |
+        PAYLOAD=$(echo -n "{\"executionId\": \"$CODEPIPELINE_EXECUTION_ID\"}" | base64)
+      - aws lambda invoke --function-name ${ProjectName}-GenerateScanNameCD --payload "$PAYLOAD" response.json
+      - SCAN_NAME=$(cat response.json | jq -r '.scan_name')
+      - echo "timestamp=$SCAN_NAME"
+  build:
+    commands:
+      - echo "Fetching Kubescape scan script..."
+      - aws ssm get-parameter --name "/devsecops/kubescape_cd_scan" --with-decryption --query "Parameter.Value" --output text > dynamicscan_script.sh
+      - chmod +x dynamicscan_script.sh
+      - |
+        echo "${REMOTE_SERVERS}" | tr ',' '\n' | while IFS= read -r SERVER; do
+          ./dynamicscan_script.sh "${REMOTE_USER}" "$SERVER" "${NAMESPACE}" "${CLUSTER_NAME}"
+        done
+  post_build:
+    commands:
+      - echo "Uploading Kubescape scan results..."
+      - aws s3 cp ${NAMESPACE}_DynamicScan_output.xml s3://$ARTIFACT_BUCKET/secureline-output/${GitHubRepo}/$SCAN_NAME/DynamicKubescapeResults/kubescape_ns_${NAMESPACE}_DynamicScan_output.xml
+      - aws s3 cp ${CLUSTER_NAME}_DynamicScan_output.xml s3://$ARTIFACT_BUCKET/secureline-output/${GitHubRepo}/$SCAN_NAME/DynamicKubescapeResults/kubescape_cluster_${CLUSTER_NAME}_DynamicScan_output.xml
+      - aws s3 cp ${NAMESPACE}_DynamicScan_output.xml s3://$ARTIFACT_BUCKET/secureline-output/${GitHubRepo}/$SCAN_NAME/DynamicKubescapeResults/kubescape_ns.xml
+      - aws s3 cp ${CLUSTER_NAME}_DynamicScan_output.xml s3://$ARTIFACT_BUCKET/secureline-output/${GitHubRepo}/$SCAN_NAME/DynamicKubescapeResults/kubescape_cluster.xml
+
+artifacts:
+  files:
+    - ${NAMESPACE}_DynamicScan_output.xml
+    - ${CLUSTER_NAME}_DynamicScan_output.xml

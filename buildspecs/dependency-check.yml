@@ -1,0 +1,74 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto17
+    commands:
+      - wget https://github.com/jeremylong/DependencyCheck/releases/download/v12.0.2/dependency-check-12.0.2-release.zip
+      - unzip dependency-check-12.0.2-release.zip
+      - mkdir -p $(pwd)/dependency-check/data
+      - echo "$(pwd)/dependency-check/data"
+      - aws s3 cp s3://secureline-cicd/data/ $(pwd)/dependency-check/data/ --recursive
+      - rm dependency-check-12.0.2-release.zip
+      - chmod +x dependency-check/bin/dependency-check.sh
+
+  pre_build:
+    commands:
+      - echo "Starting Dependency Check scan..."
+      - TIMESTAMP=$(date +%Y-%m-%d-%H-%M)
+      - echo $CODEPIPELINE_EXECUTION_ID
+      - |
+        PAYLOAD=$(echo -n "{\"executionId\": \"$CODEPIPELINE_EXECUTION_ID\"}" | base64) 
+      - aws lambda invoke --function-name ${ProjectName}-GenerateScanNameCI --payload "$PAYLOAD" response.json
+      - SCAN_NAME=$(cat response.json | jq -r '.scan_name')
+      - echo "timestamp=$SCAN_NAME"
+
+  build:
+    commands:
+      - |
+        echo "Running Dependency Check..."
+        ./dependency-check/bin/dependency-check.sh \
+          --scan . \
+          --noupdate \
+          --format JSON \
+          --format HTML \
+          --format XML \
+          --failOnCVSS 7 \
+          --out . || true
+      - ls -la
+
+  post_build:
+    commands:
+      - |
+        TIMESTAMP=$(date +%Y-%m-%d-%H-%M)
+        if [ -f "dependency-check-report.json" ]; then
+          aws s3 cp dependency-check-report.json s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/SoftwareCompositionAnalysisResults/dependency-check-report.json
+        else
+          echo "JSON report file not found, creating empty one"
+          echo '{"dependencies": [], "reportSchema": "1.1"}' > dependency-check-report.json
+          aws s3 cp dependency-check-report.json s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/SoftwareCompositionAnalysisResults/dependency-check-report.json
+        fi
+        
+        if [ -f "dependency-check-report.html" ]; then
+          aws s3 cp dependency-check-report.html s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/SoftwareCompositionAnalysisResults/dependency-check-report.html
+        else
+          echo "HTML report file not found, creating empty one"
+          echo '<html><body>No dependencies found to scan</body></html>' > dependency-check-report.html
+          aws s3 cp dependency-check-report.html s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/SoftwareCompositionAnalysisResults/dependency-check-report.html
+        fi
+
+        if [ -f "dependency-check-report.xml" ]; then
+          aws s3 cp dependency-check-report.xml s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/SoftwareCompositionAnalysisResults/dependency-check-report.xml
+        else
+          echo "XML report file not found, creating empty one"
+          echo '<dependency-check-report></dependency-check-report>' > dependency-check-report.xml
+          aws s3 cp dependency-check-report.xml s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/SoftwareCompositionAnalysisResults/dependency-check-report.xml
+        fi
+
+artifacts:
+  files:
+    - dependency-check-report.json
+    - dependency-check-report.html
+    - dependency-check-report.xml     
+  base-directory: .

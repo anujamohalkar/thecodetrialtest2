@@ -1,0 +1,35 @@
+version: 0.2
+run-as: root
+
+phases:
+  pre_build:
+    commands:
+      - echo "Setting up SSH for remote CIS scan..."
+      - mkdir -p /root/.ssh
+      - aws ssm get-parameter --name "/devsecops/SECURLINE_PRIVATE_KEY" --with-decryption --query "Parameter.Value" --output text > /root/.ssh/id_rsa
+      - chmod 600 /root/.ssh/id_rsa
+      - echo "StrictHostKeyChecking no" >> /root/.ssh/config
+      - |
+        PAYLOAD=$(echo -n "{\"executionId\": \"$CODEPIPELINE_EXECUTION_ID\"}" | base64)
+      - aws lambda invoke --function-name ${ProjectName}-GenerateScanNameCD --payload "$PAYLOAD" response.json
+      - SCAN_NAME=$(cat response.json | jq -r '.scan_name')
+      - echo "timestamp=$SCAN_NAME"
+  build:
+    commands:
+      - echo "Fetching CIS audit script..."
+      - aws ssm get-parameter --name "/devsecops/CIS_audit" --with-decryption --query "Parameter.Value" --output text > cis_audit_script.sh
+      - aws ssm get-parameter --name "/devsecops/cisaudit_file" --with-decryption --query "Parameter.Value" --output text | base64 --decode > cis_2.3.2.1.yml
+      - chmod +x cis_audit_script.sh
+      - |
+        echo "${REMOTE_SERVERS}" | tr ',' '\n' | while IFS= read -r SERVER; do
+          ./cis_audit_script.sh "${REMOTE_USER}" "$SERVER"
+        done
+  post_build:
+    commands:
+      - echo "Uploading CIS audit results..."
+      - aws s3 cp audit_*.json s3://$ARTIFACT_BUCKET/secureline-output/${GitHubRepo}/$SCAN_NAME/OS_CISComplianceResults/
+      - aws s3 cp audit_*.json s3://$ARTIFACT_BUCKET/secureline-output/${GitHubRepo}/$SCAN_NAME/OS_CISComplianceResults/CIS_172.31.47.131_Ubuntu22_cis_audit.json
+
+artifacts:
+  files:
+    - audit_*.json

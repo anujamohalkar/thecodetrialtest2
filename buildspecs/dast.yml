@@ -1,0 +1,29 @@
+version: 0.2
+run-as: root
+
+phases:
+  build:
+    commands:
+      - echo "Fetching ZAP scan script..."
+      - aws ssm get-parameter --name "/devsecops/ZAP_SH" --with-decryption --query "Parameter.Value" --output text > zap_script.sh
+      - chmod +x zap_script.sh
+      - export ZAP_TARGET_URL="http://testphp.vulnweb.com"
+      - export ZAP_USERNAME="test"  # Update as needed
+      - export ZAP_PASSWORD="test"  # Update as needed
+      - ./zap_script.sh
+      - |
+        PAYLOAD=$(echo -n "{\"executionId\": \"$CODEPIPELINE_EXECUTION_ID\"}" | base64)
+      - aws lambda invoke --function-name ${ProjectName}-GenerateScanNameCD --payload "$PAYLOAD" response.json
+      - SCAN_NAME=$(cat response.json | jq -r '.scan_name')
+      - echo "timestamp=$SCAN_NAME"
+  post_build:
+    commands:
+      - echo "Uploading ZAP scan results to S3..."
+      - aws s3 cp /root/zap_instance_*/automation/reports/zap-scan-*.xml s3://$ARTIFACT_BUCKET/secureline-output/${GitHubRepo}/$SCAN_NAME/DASTScanResults/
+      - aws s3 cp /root/zap_instance_*/automation/reports/zap-scan-*.xml s3://$ARTIFACT_BUCKET/secureline-output/${GitHubRepo}/$SCAN_NAME/DASTScanResults/zap-scan.xml
+
+artifacts:
+  files:
+    - "**/zap-scan-*.xml"
+  discard-paths: no
+  base-directory: /root/zap_instance_*/automation/reports

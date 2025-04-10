@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 3  
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:latest  # ❌ Using latest tag (Security issue)
+          ports:
+            - containerPort: 80
+          resources:
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          securityContext:
+            privileged: true  # ❌ Running as privileged container (High risk)
+            runAsUser: 0  # ❌ Running as root user (Bad practice)
+            allowPrivilegeEscalation: true  # ❌ Should be false for security
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: host-path-volume  # ❌ Accessing host path (Potential risk)
+              mountPath: /etc/nginx
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nginx-config
+        - name: host-path-volume
+          hostPath:
+            path: /etc/nginx  # ❌ Can be used to modify host files (Risky)
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx
+  ports:
+    - protocol: TCP
+      port: 80        
+      targetPort: 80  
+  type: LoadBalancer  # ❌ Exposing directly without network policies (Risky)
+

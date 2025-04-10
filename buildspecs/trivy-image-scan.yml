@@ -1,0 +1,60 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Installing Trivy..."
+      - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+  pre_build:
+    commands:
+      - echo "Checking for Dockerfile..."
+      - |
+        if ! find . -name "Dockerfile" -type f | grep -q .; then
+          echo "No Dockerfile found - creating empty results"
+          echo '{"Results":[]}' > trivy-image-results.json
+          exit 0
+        fi
+      - echo "Dockerfile found - proceeding with Trivy scans"
+      - echo "Configuring AWS CLI..."
+      - aws configure set region $AWS_REGION
+      - aws sts get-caller-identity
+      - echo "Fetching Docker Hub credentials from AWS Secrets Manager..."
+      - export DOCKER_USERNAME=$(aws ssm get-parameter --name /devsecops/DockerUser --with-decryption --query "Parameter.Value" --output text)
+      - export DOCKER_PASSWORD=$(aws ssm get-parameter --name /devsecops/DockerPasswd --with-decryption --query "Parameter.Value" --output text)
+      - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+      - echo $CODEPIPELINE_EXECUTION_ID
+      - |
+        PAYLOAD=$(echo -n "{\"executionId\": \"$CODEPIPELINE_EXECUTION_ID\"}" | base64)
+      - aws lambda invoke --function-name ${ProjectName}-GenerateScanNameCI --payload "$PAYLOAD" response.json      
+      - SCAN_NAME=$(cat response.json | jq -r '.scan_name')
+      - echo "timestamp=$SCAN_NAME"
+  build:
+    commands:
+      - echo "Building Docker image..."
+      - IMAGE_NAME="flask-app:latest"
+      - ls -lhtr
+      - cd Python-application
+      - docker build -t $IMAGE_NAME .
+
+      - echo "Running Trivy image scan..."
+      - trivy image $IMAGE_NAME --format json -o trivy-image-results.json || true
+
+      - ls -la
+
+  post_build:
+    commands:
+      - |
+        echo "Uploading results to S3..."
+        if [ -f "trivy-image-results.json" ]; then
+          aws s3 cp trivy-image-results.json s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/ContainerImageVulnerabilityScanResults/Trivy_Image_result.json
+        else
+          echo '{"Results":[]}' > trivy-image-results.json
+          aws s3 cp trivy-image-results.json s3://${RESULTS_BUCKET}/secureline-output/${GitHubRepo}/$SCAN_NAME/ContainerImageVulnerabilityScanResults/Trivy_Image_result.json
+        fi
+
+artifacts:
+  files:
+    - trivy-image-results.json
+  base-directory: Python-application
+
