@@ -19,7 +19,7 @@ phases:
       - sudo apt install postgresql-client jq -y                      
       - |
         export POSTGRES_PORT=5432
-        export POSTGRES_DBNAME=$(aws ssm get-parameter --name /devsecops/POSTGRES_DBNAME --with-decryption --query "Parameter.Value" --output text)
+        export POSTGRES_DBNAME="testing"
         export POSTGRES_HOST=$(aws ssm get-parameter --name /devsecops/POSTGRES_HOST --with-decryption --query "Parameter.Value" --output text)
         export POSTGRES_USER=$(aws ssm get-parameter --name /devsecops/POSTGRES_USER --with-decryption --query "Parameter.Value" --output text)
         export POSTGRES_PASSWORD=$(aws ssm get-parameter --name /devsecops/POSTGRES_PASSWORD --with-decryption --query "Parameter.Value" --output text)
